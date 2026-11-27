@@ -5,7 +5,6 @@ Writes a Markdown report + logs to $REPORT_DIR (default ./report).
 """
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import signal
