@@ -88,11 +88,9 @@ def jar_info(src, depth: int = 0) -> dict:
         if depth < 2:
             for n in nested:
                 if n and n in names:
-                    sub = jar_info(z.read(n), depth + 1)
-                    info["ids"] |= sub["ids"]
-                    info["deps"] |= sub["deps"]
-                    if sub["java"] and (info["java"] or 0) < sub["java"]:
-                        info["java"] = sub["java"]
+                    # Bundled (jar-in-jar) modules are optional for the loader: if their own
+                    # requirements fail they are simply not loaded. So they only *provide* ids.
+                    info["ids"] |= jar_info(z.read(n), depth + 1)["ids"]
     return info
 
 

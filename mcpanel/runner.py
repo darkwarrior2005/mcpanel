@@ -44,6 +44,7 @@ RE_LEFT = re.compile(r"\]: ([A-Za-z0-9_.\-]{1,32}) left the game\s*$")
 RE_STOPPING = re.compile(r"Stopping (the )?server")
 # Fabric/Quilt: "... requires version 25 or later of 'OpenJDK 64-Bit Server VM' (java)"
 RE_JAVA_REQ = re.compile(r"requires (?:version )?(\d+) or later of '[^']*' \(java\)")
+RE_JAVA_FIX = re.compile(r"Replace '[^']*' \(java\) (\d+) with version (\d+)")
 RE_MISSING = re.compile(r"requires .* of (\S+), which is missing")
 RE_CLASSFILE = re.compile(r"class file version (\d+)\.0\)?.*only recognizes class file versions up to")
 
@@ -100,6 +101,7 @@ class Runner:
         self.exit_code = None
         self.server_sock = None
         self.missing_hinted: set = set()
+        self.java_fixed = False
         inst.logs_dir.mkdir(parents=True, exist_ok=True)
         log = inst.logs_dir / "console.log"
         try:
@@ -157,8 +159,10 @@ class Runner:
         if not panel:
             self.parse(line)
 
-    def check_java(self, need: int) -> None:
-        if need <= int(self.inst.java_major) or self.inst.java_path:
+    def check_java(self, need: int, exact: bool = False) -> None:
+        if self.inst.java_path or need == int(self.inst.java_major):
+            return
+        if need < int(self.inst.java_major) and not exact:
             return
         try:
             inst = Instance.load(self.inst.id)
@@ -173,8 +177,12 @@ class Runner:
     def parse(self, line: str) -> None:
         plain = ANSI.sub("", line)
         if self.state in ("starting", "restarting"):
-            m = RE_JAVA_REQ.search(plain)
+            m = RE_JAVA_FIX.search(plain)   # Fabric's own suggested fix wins
             if m:
+                self.java_fixed = True
+                self.check_java(int(m.group(2)), exact=True)
+            m = RE_JAVA_REQ.search(plain)
+            if m and not self.java_fixed:
                 self.check_java(int(m.group(1)))
             m = RE_CLASSFILE.search(plain)
             if m:  # class file 69 = Java 25, 65 = Java 21 ...
