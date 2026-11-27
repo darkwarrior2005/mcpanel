@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install MCPanel with install.sh (like on a real server)
-        run: ./install.sh --no-service
+        run: |
+          ./install.sh --no-service
+          ~/.local/share/mcpanel/venv/bin/pip install -q mcstatus
 
       - name: Run the real end-to-end test
         env:

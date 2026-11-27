@@ -9,8 +9,6 @@ import json
 import os
 import shutil
 import signal
-import socket
-import struct
 import subprocess
 import sys
 import time
@@ -85,44 +83,18 @@ def console_text(inst) -> str:
         return ""
 
 
-def ping(port: int, host: str = "127.0.0.1") -> dict:
-    """Minecraft Server List Ping - what the multiplayer screen does."""
-    def varint(n):
-        out = b""
-        n &= 0xFFFFFFFF
-        while True:
-            b = n & 0x7F
-            n >>= 7
-            out += struct.pack("B", b | (0x80 if n else 0))
-            if not n:
-                return out
-
-    def read_varint(s):
-        n = shift = 0
-        while True:
-            b = s.recv(1)
-            if not b:
-                raise IOError("closed")
-            n |= (b[0] & 0x7F) << shift
-            if not b[0] & 0x80:
-                return n
-            shift += 7
-
-    with socket.create_connection((host, port), timeout=10) as s:
-        hb = host.encode()
-        data = b"\x00" + varint(767) + varint(len(hb)) + hb + struct.pack(">H", port) + varint(1)
-        s.sendall(varint(len(data)) + data)
-        s.sendall(varint(1) + b"\x00")
-        read_varint(s)              # packet length
-        read_varint(s)              # packet id
-        ln = read_varint(s)
-        buf = b""
-        while len(buf) < ln:
-            chunk = s.recv(ln - len(buf))
-            if not chunk:
-                break
-            buf += chunk
-        return json.loads(buf.decode("utf-8", "replace"))
+def ping(port: int, host: str = "127.0.0.1", tries: int = 6) -> dict:
+    """Server List Ping, exactly what the Minecraft multiplayer screen does (via mcstatus)."""
+    from mcstatus import JavaServer
+    last = None
+    for i in range(tries):
+        try:
+            return JavaServer(host, port, timeout=10).status().raw
+        except Exception as e:
+            last = e
+            log(f"   ping attempt {i + 1} failed: {type(e).__name__}: {e}")
+            time.sleep(5)
+    raise RuntimeError(f"no ping answer after {tries} tries: {type(last).__name__}: {last}")
 
 
 def create(name, kind, params, mem=3072):
