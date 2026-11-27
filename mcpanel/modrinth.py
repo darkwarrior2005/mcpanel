@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import net
+from . import moddeps, net, paths
 from .safezip import extract_member, safe_join
 
 API = "https://api.modrinth.com/v2"
@@ -92,4 +93,52 @@ def install_mrpack(mrpack_path, sd: Path, log, progress) -> dict:
                 rel = info.filename[len(prefix):]
                 if rel:
                     extract_member(z, info, safe_join(sd, rel))
+
+    skipped_mods = [f for f in index.get("files", [])
+                    if (f.get("env") or {}).get("server") == "unsupported"
+                    and f["path"].startswith("mods/") and f["path"].endswith(".jar")]
+    if skipped_mods:
+        restore_needed_libraries(skipped_mods, sd, log)
     return index.get("dependencies", {})
+
+
+def restore_needed_libraries(skipped: list, sd: Path, log) -> None:
+    """Some packs mark libraries as client-only although server mods require them.
+    Download the skipped mods, and put back any that provide a missing dependency."""
+    installed = moddeps.scan_dir(sd / "mods")
+    missing = moddeps.missing_deps(installed)
+    if not missing:
+        return
+    log(f"Server mods need {', '.join(sorted(missing))} - checking the pack's client-only files...")
+    cache = paths.CACHE_DIR / "skipped-mods"
+    cache.mkdir(parents=True, exist_ok=True)
+
+    def fetch(f):
+        target = cache / Path(f["path"]).name
+        if not target.exists():
+            for url in f.get("downloads") or []:
+                try:
+                    net.download(url, target, sha1=(f.get("hashes") or {}).get("sha1"), retries=2)
+                    break
+                except Exception:
+                    continue
+        return f, (moddeps.jar_info(target) if target.exists() else None)
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        candidates = [r for r in ex.map(fetch, skipped) if r[1]]
+    provided = set().union(*(i["ids"] for i in installed.values()))
+    changed = True
+    while missing and changed:
+        changed = False
+        for f, info in candidates:
+            if info["ids"] & missing and not (sd / f["path"]).exists():
+                target = safe_join(sd, f["path"])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(cache / Path(f["path"]).name, target)
+                log(f"  + {f['path']}  (pack marks it client-only, but the server needs "
+                    f"{', '.join(sorted(info['ids'] & missing))})")
+                provided |= info["ids"]
+                missing = (missing | (info["deps"] - moddeps.IGNORE)) - provided
+                changed = True
+    if missing:
+        log(f"WARNING: still missing dependencies: {', '.join(sorted(missing))}")

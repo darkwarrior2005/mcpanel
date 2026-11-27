@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import shutil
 
-from . import (curseforge, importer, javamgr, loaders, mcversions, modrinth, net, paths,
-               props)
+from . import (curseforge, importer, javamgr, loaders, mcversions, moddeps, modrinth, net,
+               paths, props)
 from .instances import Instance, new_id
 
 DEP_LOADERS = (("neoforge", "neoforge"), ("forge", "forge"),
@@ -70,6 +70,10 @@ def create_server(name: str, kind: str, params: dict, memory_mb: int, port: int,
         inst.mc_version = mc
         inst.java_major = mcversions.java_major_for(mc) if mc else 21
         log(f"Minecraft {mc or 'unknown'} -> needs Java {inst.java_major}")
+        mods_java = moddeps.required_java(sd / "mods")
+        if mods_java and mods_java > inst.java_major:
+            log(f"Some mods in this pack require Java {mods_java} -> using Java {mods_java}")
+            inst.java_major = mods_java
         java = javamgr.ensure_java(inst.java_major, log, progress)
 
         if loader:

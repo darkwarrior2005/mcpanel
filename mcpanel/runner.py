@@ -42,6 +42,10 @@ RE_DONE = re.compile(r"Done \([\d.,]+\s*s\)!")
 RE_JOIN = re.compile(r"\]: ([A-Za-z0-9_.\-]{1,32}) joined the game\s*$")
 RE_LEFT = re.compile(r"\]: ([A-Za-z0-9_.\-]{1,32}) left the game\s*$")
 RE_STOPPING = re.compile(r"Stopping (the )?server")
+# Fabric/Quilt: "... requires version 25 or later of 'OpenJDK 64-Bit Server VM' (java)"
+RE_JAVA_REQ = re.compile(r"requires (?:version )?(\d+) or later of '[^']*' \(java\)")
+RE_MISSING = re.compile(r"requires .* of (\S+), which is missing")
+RE_CLASSFILE = re.compile(r"class file version (\d+)\.0\)?.*only recognizes class file versions up to")
 
 
 def build_command(inst: Instance, java: str):
@@ -95,6 +99,7 @@ class Runner:
         self.started_at = None
         self.exit_code = None
         self.server_sock = None
+        self.missing_hinted: set = set()
         inst.logs_dir.mkdir(parents=True, exist_ok=True)
         log = inst.logs_dir / "console.log"
         try:
@@ -152,8 +157,33 @@ class Runner:
         if not panel:
             self.parse(line)
 
+    def check_java(self, need: int) -> None:
+        if need <= int(self.inst.java_major) or self.inst.java_path:
+            return
+        try:
+            inst = Instance.load(self.inst.id)
+            inst.java_major = need
+            inst.save()
+            self.inst = inst
+            self.emit(f"A mod needs Java {need} - switched this server to Java {need} "
+                      "(downloaded automatically on the next start).", panel=True)
+        except Exception as e:
+            self.emit(f"Could not switch Java version: {e}", panel=True)
+
     def parse(self, line: str) -> None:
         plain = ANSI.sub("", line)
+        if self.state in ("starting", "restarting"):
+            m = RE_JAVA_REQ.search(plain)
+            if m:
+                self.check_java(int(m.group(1)))
+            m = RE_CLASSFILE.search(plain)
+            if m:  # class file 69 = Java 25, 65 = Java 21 ...
+                self.check_java(int(m.group(1)) - 44)
+            m = RE_MISSING.search(plain)
+            if m and m.group(1) not in self.missing_hinted:
+                self.missing_hinted.add(m.group(1))
+                self.emit(f"Missing mod '{m.group(1)}': add its .jar to the mods folder "
+                          "(Mods tab shows the path).", panel=True)
         if self.state in ("starting", "restarting") and RE_DONE.search(plain):
             self.set_state("running")
             return
