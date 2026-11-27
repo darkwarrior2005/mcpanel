@@ -1,0 +1,35 @@
+name: MCPanel cloud test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MCPanel with install.sh (like on a real server)
+        run: ./install.sh --no-service
+
+      - name: Run the real end-to-end test
+        env:
+          REPORT_DIR: ${{ github.workspace }}/report
+        run: ~/.local/share/mcpanel/venv/bin/python tests/cloud_test.py
+
+      - name: Publish report to the test-results branch
+        if: always()
+        run: |
+          cd report
+          git init -q -b test-results
+          git config user.name "mcpanel-ci"
+          git config user.email "mcpanel-ci@users.noreply.github.com"
+          git add -A
+          git commit -qm "Cloud test run ${{ github.run_number }} (${{ github.sha }})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" test-results
