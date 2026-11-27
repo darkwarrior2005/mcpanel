@@ -69,7 +69,9 @@ def state(inst) -> str:
 
 
 def wait_running(inst, timeout=600) -> bool:
-    return wait_for(lambda: state(inst) == "running", timeout, 2)
+    # give up early once the runner has given up (crashed for good)
+    wait_for(lambda: state(inst) in ("running", "crashed"), timeout, 2)
+    return state(inst) == "running"
 
 
 def wait_stopped(inst, timeout=180) -> bool:
