@@ -692,6 +692,7 @@ class MCPanelApp(App):
         Binding("r", "restart", "Restart"),
         Binding("b", "backup", "Backup"),
         Binding("c", "copy_address", "Copy address"),
+        Binding("t", "recheck_tailscale", "Re-check Tailscale"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -707,7 +708,8 @@ class MCPanelApp(App):
         self._last_players = None
         self._busy = False
 
-    MAIN_ONLY = {"new_server", "start", "stop", "restart", "backup", "copy_address"}
+    MAIN_ONLY = {"new_server", "start", "stop", "restart", "backup", "copy_address",
+                 "recheck_tailscale"}
 
     def check_action(self, action: str, parameters):
         if action in self.MAIN_ONLY and len(self.screen_stack) > 1:
@@ -1088,6 +1090,10 @@ class MCPanelApp(App):
         daemon = control.daemon_running()
         self.call_from_thread(self._set_ts, ts, daemon)
 
+    def action_recheck_tailscale(self) -> None:
+        self.notify("Checking Tailscale...")
+        self.refresh_tailscale()
+
     def _set_ts(self, ts: dict, daemon: bool) -> None:
         self.ts = ts
         t = Text()
@@ -1099,8 +1105,11 @@ class MCPanelApp(App):
                 t.append(f"{ts['dns']}\n", style="dim")
         else:
             t.append("Tailscale ", style="bold")
-            t.append("not detected\n", style="yellow")
-            t.append(f"LAN IP {tailscale.lan_ip()}\n", style="dim")
+            t.append(f"{ts.get('error', 'not detected')}\n", style="yellow")
+            if ts.get("fix"):
+                t.append("Fix: ", style="bold")
+                t.append(f"{ts['fix']}\n", style="cyan")
+            t.append(f"LAN IP {tailscale.lan_ip()}  (press T to re-check)\n", style="dim")
         t.append("Service ", style="bold")
         if daemon:
             t.append("● always-on", style="green")
