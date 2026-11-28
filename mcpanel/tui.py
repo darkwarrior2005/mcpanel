@@ -62,6 +62,16 @@ NUMERIC_ENUMS = {
     "difficulty": ["peaceful", "easy", "normal", "hard"],
     "gamemode": ["survival", "creative", "adventure", "spectator"],
 }
+INST_INPUTS = {"name": str, "memory_mb": int, "min_memory_mb": int, "java_path": str,
+               "jvm_args": str, "backup_interval_h": float, "backup_keep": int,
+               "launch_target": str}
+INST_SWITCHES = ["aikar_flags", "autostart", "auto_restart"]
+INST_LABELS = {"name": "Display name", "memory_mb": "Max RAM", "min_memory_mb": "Min RAM",
+               "java_major": "Java version", "java_path": "Custom Java", "jvm_args": "Extra JVM args",
+               "aikar_flags": "Aikar flags", "autostart": "Start on boot",
+               "auto_restart": "Auto-restart", "backup_interval_h": "Auto-backup interval",
+               "backup_keep": "Backups to keep", "launch_mode": "Launch mode",
+               "launch_target": "Launch target"}
 JAVA_OPTIONS = ["8", "11", "16", "17", "21", "22", "23", "24", "25"]
 QUICK_CMDS = [("list", "list"), ("save-all", "save-all"), ("Day", "time set day"),
               ("Clear weather", "weather clear"), ("TPS (forge)", "forge tps")]
@@ -658,6 +668,8 @@ MAIN_CSS = """
 #pl-tables Label { text-style: bold; padding: 0 1; }
 #detail DataTable { height: 1fr; }
 #settings-scroll { height: 1fr; }
+#set-status { height: auto; padding: 0 1; }
+#set-cmd { height: auto; padding: 0 1; color: $text-muted; }
 .set-head { text-style: bold; color: $accent; margin: 1 0 0 0; }
 .set-row { height: auto; }
 .set-lbl { width: 40; padding: 1 1 0 1; }
@@ -707,6 +719,7 @@ class MCPanelApp(App):
         self._tick_n = 0
         self._last_players = None
         self._busy = False
+        self._settings_timer = None
 
     MAIN_ONLY = {"new_server", "start", "stop", "restart", "backup", "copy_address",
                  "recheck_tailscale"}
@@ -802,14 +815,16 @@ class MCPanelApp(App):
                     yield DataTable(id=tid, cursor_type="row")
 
     def _compose_settings(self):
+        with Horizontal(classes="row", id="set-bar"):
+            yield Button("Save now", id="set-save", variant="success")
+            yield Button("Edit server.properties (raw)", id="set-raw")
+            yield Button("Edit JVM args file", id="set-jvmfile")
+            yield Button("Bind to Tailscale IP only", id="set-tsbind")
+            yield Button("Re-detect launch", id="set-detect")
+        yield Static("", id="set-status")
+        yield Static("", id="set-cmd")
         with VerticalScroll(id="settings-scroll"):
-            with Horizontal(classes="row"):
-                yield Button("Save settings", id="set-save", variant="success")
-                yield Button("Edit server.properties (raw)", id="set-raw")
-                yield Button("Edit JVM args file", id="set-jvmfile")
-                yield Button("Bind to Tailscale IP only", id="set-tsbind")
-                yield Button("Re-detect launch", id="set-detect")
-            yield Label("MCPanel options", classes="set-head")
+            yield Label("MCPanel options  (changes save automatically)", classes="set-head")
             rows = [
                 ("inst-name", "Display name", Input(id="inst-name")),
                 ("inst-memory_mb", "Max RAM (MB, -Xmx)", Input(id="inst-memory_mb", type="integer")),
@@ -910,6 +925,8 @@ class MCPanelApp(App):
     def select_server(self, iid, force: bool = False) -> None:
         if iid == self.current_id and not force:
             return
+        if iid != self.current_id:
+            self._flush_settings_timer(save=True)   # finish saving edits of the old server
         changed = iid != self.current_id
         self.current_id = iid
         self.query_one("#empty").display = iid is None
@@ -1456,101 +1473,212 @@ class MCPanelApp(App):
         except Exception:
             pass
 
+    def _fill_select(self, wid: str, value: str, opts) -> None:
+        """Set a Select, adding the value as an option if it isn't one (never silently
+        replace a value we don't know with a default)."""
+        sel = self.query_one(wid, Select)
+        if value not in [str(o) for o in opts]:
+            sel.set_options([(str(o), str(o)) for o in list(opts) + [value]])
+        self._set_select(wid, value)
+
     def load_settings(self) -> None:
         inst = self.cur()
         if not inst:
             return
+        self._flush_settings_timer(save=False)
         q = self.query_one
-        q("#inst-name", Input).value = inst.name
-        q("#inst-memory_mb", Input).value = str(inst.memory_mb)
-        q("#inst-min_memory_mb", Input).value = str(inst.min_memory_mb)
-        self._set_select("#inst-java_major", str(inst.java_major))
-        q("#inst-java_path", Input).value = inst.java_path
-        q("#inst-jvm_args", Input).value = inst.jvm_args
-        q("#inst-aikar_flags", Switch).value = inst.aikar_flags
-        q("#inst-autostart", Switch).value = inst.autostart
-        q("#inst-auto_restart", Switch).value = inst.auto_restart
-        q("#inst-backup_interval_h", Input).value = f"{inst.backup_interval_h:g}"
-        q("#inst-backup_keep", Input).value = str(inst.backup_keep)
-        lm = q("#inst-launch_mode", Select)
+        for f in INST_INPUTS:
+            v = getattr(inst, f)
+            q(f"#inst-{f}", Input).value = f"{v:g}" if isinstance(v, float) else str(v)
+        for f in INST_SWITCHES:
+            q(f"#inst-{f}", Switch).value = bool(getattr(inst, f))
+        jm = str(inst.java_major)
+        if jm not in JAVA_OPTIONS:
+            opts = sorted(set(JAVA_OPTIONS) | {jm}, key=int)
+            q("#inst-java_major", Select).set_options([(f"Java {j}", j) for j in opts])
+        self._set_select("#inst-java_major", jm)
         if inst.launch_mode:
             self._set_select("#inst-launch_mode", inst.launch_mode)
         else:
-            lm.clear()
-        q("#inst-launch_target", Input).value = inst.launch_target
+            q("#inst-launch_mode", Select).clear()
         pr = inst.properties()
         for key, _, typ, opts in PROP_FIELDS:
             wid = f"#prop-{key.replace('.', '_')}"
-            val = pr.get(key, PROP_DEFAULTS.get(key, ""))
+            val = self._prop_effective(pr, key)
             if typ == "bool":
-                q(wid, Switch).value = val.strip().lower() == "true"
+                q(wid, Switch).value = val == "true"
             elif typ == "select":
-                if key in NUMERIC_ENUMS and val.isdigit() and int(val) < len(NUMERIC_ENUMS[key]):
-                    val = NUMERIC_ENUMS[key][int(val)]
-                self._set_select(wid, val if val in opts else PROP_DEFAULTS[key])
+                self._fill_select(wid, val, opts)
             else:
                 q(wid, Input).value = val
+        self._set_status("")
+        self._update_launch_preview(inst)
 
-    @on(Button.Pressed, "#set-save")
-    def _save_settings(self) -> None:
+    @staticmethod
+    def _prop_effective(pr: dict, key: str) -> str:
+        val = pr.get(key, PROP_DEFAULTS.get(key, "")).strip()
+        if key in NUMERIC_ENUMS and val.isdigit() and int(val) < len(NUMERIC_ENUMS[key]):
+            val = NUMERIC_ENUMS[key][int(val)]
+        typ = next(t for k, _l, t, _o in PROP_FIELDS if k == key)
+        return val.lower() if typ == "bool" else val
+
+    def _set_status(self, msg: str, style: str = "green") -> None:
+        self.query_one("#set-status", Static).update(Text(msg, style=style))
+
+    def _update_launch_preview(self, inst) -> None:
+        try:
+            from .runner import preview_command
+            txt = preview_command(inst)
+        except Exception as e:
+            txt = f"Launch: ? ({e})"
+        self.query_one("#set-cmd", Static).update(Text(txt))
+
+    def _read_form(self, inst):
+        """Collect the settings form. Raises ValueError with a friendly message."""
+        q = self.query_one
+        vals = {}
+        for f, typ in INST_INPUTS.items():
+            raw = q(f"#inst-{f}", Input).value.strip()
+            if typ is str:
+                vals[f] = raw
+                continue
+            if raw == "":
+                raise ValueError(f"{INST_LABELS[f]} can't be empty")
+            try:
+                vals[f] = typ(raw)
+            except ValueError:
+                raise ValueError(f"{INST_LABELS[f]} must be a number") from None
+        for f in INST_SWITCHES:
+            vals[f] = bool(q(f"#inst-{f}", Switch).value)
+        jm = q("#inst-java_major", Select).value
+        vals["java_major"] = int(jm) if isinstance(jm, str) else inst.java_major
+        lm = q("#inst-launch_mode", Select).value
+        vals["launch_mode"] = lm if isinstance(lm, str) else ""
+        if not vals["name"]:
+            raise ValueError("Display name can't be empty")
+        if vals["memory_mb"] < 512:
+            raise ValueError("Max RAM must be at least 512 MB")
+        if vals["min_memory_mb"] < 128:
+            raise ValueError("Min RAM must be at least 128 MB")
+        if vals["min_memory_mb"] > vals["memory_mb"]:
+            raise ValueError("Min RAM can't be more than Max RAM")
+        if vals["backup_keep"] < 1:
+            raise ValueError("Backups to keep must be at least 1")
+        pvals = {}
+        for key, label, typ, _o in PROP_FIELDS:
+            wid = f"#prop-{key.replace('.', '_')}"
+            if typ == "bool":
+                pvals[key] = "true" if q(wid, Switch).value else "false"
+            elif typ == "select":
+                pvals[key] = str(q(wid, Select).value)
+            else:
+                raw = q(wid, Input).value.strip()
+                if typ == "int":
+                    if not raw.lstrip("-").isdigit():
+                        raise ValueError(f"{label} must be a number")
+                pvals[key] = raw
+        return vals, pvals
+
+    def _flush_settings_timer(self, save: bool = True) -> None:
+        t = getattr(self, "_settings_timer", None)
+        if t is not None:
+            t.stop()
+            self._settings_timer = None
+            if save:
+                self._apply_settings()
+
+    def _apply_settings(self, explicit: bool = False) -> None:
+        """Save whatever changed in the Settings form (only the changed values)."""
+        self._settings_timer = None
         inst = self.cur()
         if not inst:
             return
-        q = self.query_one
         try:
             inst = inst.reload()
-            inst.name = q("#inst-name", Input).value.strip() or inst.name
-            inst.memory_mb = int(q("#inst-memory_mb", Input).value)
-            inst.min_memory_mb = int(q("#inst-min_memory_mb", Input).value or 512)
-            inst.java_major = int(q("#inst-java_major", Select).value)
-            inst.java_path = q("#inst-java_path", Input).value.strip()
-            inst.jvm_args = q("#inst-jvm_args", Input).value.strip()
-            inst.aikar_flags = q("#inst-aikar_flags", Switch).value
-            inst.autostart = q("#inst-autostart", Switch).value
-            inst.auto_restart = q("#inst-auto_restart", Switch).value
-            inst.backup_interval_h = float(q("#inst-backup_interval_h", Input).value or 0)
-            inst.backup_keep = max(1, int(q("#inst-backup_keep", Input).value or 5))
-            lm = q("#inst-launch_mode", Select).value
-            inst.launch_mode = lm if isinstance(lm, str) else ""
-            inst.launch_target = q("#inst-launch_target", Input).value.strip()
+            vals, pvals = self._read_form(inst)
         except ValueError as e:
-            self.notify(f"Invalid number: {e}", severity="error")
+            self._set_status(f"Not saved yet: {e}", "bold yellow")
+            if explicit:
+                self.notify(str(e), severity="error")
             return
-        if inst.memory_mb < 512:
-            self.notify("Max RAM must be at least 512 MB", severity="error")
+        except Exception as e:
+            self._set_status(f"Could not read settings: {e}", "bold red")
             return
-        updates = {}
-        for key, _, typ, _o in PROP_FIELDS:
-            wid = f"#prop-{key.replace('.', '_')}"
-            if typ == "bool":
-                updates[key] = "true" if q(wid, Switch).value else "false"
-            elif typ == "select":
-                updates[key] = str(q(wid, Select).value)
-            else:
-                updates[key] = q(wid, Input).value.strip()
+        changed = []
+        for f, v in vals.items():
+            if getattr(inst, f) != v:
+                setattr(inst, f, v)
+                changed.append(INST_LABELS.get(f, f))
         old = inst.properties()
-        for key, names in NUMERIC_ENUMS.items():  # keep numeric style for very old versions
-            if old.get(key, "").isdigit() and updates[key] in names:
-                updates[key] = str(names.index(updates[key]))
+        pchanges = {}
+        for key, label, _t, _o in PROP_FIELDS:
+            new = pvals[key]
+            if new != self._prop_effective(old, key):
+                if key in NUMERIC_ENUMS and old.get(key, "").isdigit() and new in NUMERIC_ENUMS[key]:
+                    new = str(NUMERIC_ENUMS[key].index(new))   # keep numeric style (old MC)
+                pchanges[key] = new
+                changed.append(label)
+        if "server-port" in pchanges:
+            port = int(pchanges["server-port"])
+            clash = instances.used_ports(exclude_id=inst.id).get(port)
+            if clash:
+                self._set_status(f"Not saved: port {port} is used by '{clash.name}'", "bold red")
+                self.notify(f"Port {port} is already used by '{clash.name}'", severity="error")
+                return
+            if old.get("query.port"):
+                pchanges["query.port"] = str(port)
+        if not changed:
+            if explicit:
+                self._set_status("All settings are saved.")
+            return
         try:
-            port = int(updates["server-port"])
-        except ValueError:
-            self.notify("Port must be a number", severity="error")
+            inst.save()
+            if pchanges:
+                props.write_props(inst.props_file, pchanges)
+        except OSError as e:
+            self._set_status(f"Save failed: {e}", "bold red")
+            self.notify(f"Save failed: {e}", severity="error")
             return
-        clash = instances.used_ports(exclude_id=inst.id).get(port)
-        if clash:
-            self.notify(f"Port {port} is already used by '{clash.name}'", severity="error")
-            return
-        if updates.get("query.port") is None and old.get("query.port"):
-            updates["query.port"] = str(port)
-        inst.save()
-        props.write_props(inst.props_file, updates)
         self.insts[inst.id] = inst
-        self.notify("Settings saved." + (" Restart the server to apply them."
-                                          if control.is_running(inst) else ""))
+        running = control.is_running(inst)
+        msg = "Saved: " + ", ".join(changed)
+        if running:
+            msg += "  -> restart the server (R) to apply"
+        self._set_status(time.strftime("%H:%M:%S ") + msg, "bold green")
+        self.notify(msg, timeout=5)
         if inst.id in self.labels:
             self.labels[inst.id].update(self._item_text(inst))
         self.refresh_header()
+        self._update_launch_preview(inst)
+
+    def _is_setting(self, widget) -> bool:
+        wid = widget.id or ""
+        return wid.startswith("inst-") or wid.startswith("prop-")
+
+    @on(Switch.Changed)
+    @on(Select.Changed)
+    def _setting_toggled(self, ev) -> None:
+        widget = getattr(ev, "switch", None) or getattr(ev, "select", None)
+        if widget is not None and self._is_setting(widget):
+            self._flush_settings_timer(save=False)
+            self._apply_settings()
+
+    @on(Input.Changed)
+    def _setting_typed(self, ev: Input.Changed) -> None:
+        if self._is_setting(ev.input):
+            self._flush_settings_timer(save=False)
+            self._settings_timer = self.set_timer(0.8, self._apply_settings)
+
+    @on(Input.Submitted)
+    def _setting_submitted(self, ev: Input.Submitted) -> None:
+        if self._is_setting(ev.input):
+            self._flush_settings_timer(save=False)
+            self._apply_settings(explicit=True)
+
+    @on(Button.Pressed, "#set-save")
+    def _save_settings(self) -> None:
+        self._flush_settings_timer(save=False)
+        self._apply_settings(explicit=True)
 
     @on(Button.Pressed, "#set-raw")
     def _raw_props(self) -> None:
@@ -1591,8 +1719,8 @@ class MCPanelApp(App):
             self.notify("Tailscale IP not found", severity="warning")
             return
         self.query_one("#prop-server-ip", Input).value = self.ts["ip4"]
-        self.notify("Bind IP set to your Tailscale IP - only tailnet devices can join. "
-                    "Click 'Save settings'.", timeout=8)
+        self.notify("Bind IP set to your Tailscale IP - only tailnet devices can join "
+                    "(restart the server to apply).", timeout=8)
 
     @on(Button.Pressed, "#set-detect")
     def _detect(self) -> None:
@@ -1605,7 +1733,7 @@ class MCPanelApp(App):
             return
         self._set_select("#inst-launch_mode", mode)
         self.query_one("#inst-launch_target", Input).value = target
-        self.notify(f"Detected {mode}: {target}. Click 'Save settings'.")
+        self.notify(f"Detected {mode}: {target}")
 
     @on(TabbedContent.TabActivated, "#tabs")
     def _tab(self, ev: TabbedContent.TabActivated) -> None:

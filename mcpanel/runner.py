@@ -49,17 +49,63 @@ RE_MISSING = re.compile(r"requires .* of (\S+), which is missing")
 RE_CLASSFILE = re.compile(r"class file version (\d+)\.0\)?.*only recognizes class file versions up to")
 
 
+def memory_args(inst: Instance) -> list:
+    xmx = max(256, int(inst.memory_mb))
+    xms = max(128, min(int(inst.min_memory_mb or xmx), xmx))
+    return [f"-Xms{xms}M", f"-Xmx{xmx}M"]
+
+
+def make_argv(inst: Instance, java: str, mode: str, target: str) -> list:
+    mem = memory_args(inst)
+    flags = AIKAR_FLAGS if inst.aikar_flags else []
+    extra = shlex.split(inst.jvm_args or "")
+    if mode == "argsfile":
+        return [java, *mem, *flags, *extra, "@" + target, "nogui"]
+    if mode == "jar":
+        return [java, *mem, *flags, *extra, "-jar", target, "nogui"]
+    if mode == "script":
+        return ["bash", target]
+    raise RuntimeError(f"Unknown launch mode {mode}")
+
+
+def script_java_options(inst: Instance) -> str:
+    """Script launches: RAM + extra JVM args go through _JAVA_OPTIONS, which Java applies
+    *after* the script's own arguments, so the panel's settings always win."""
+    return " ".join(memory_args(inst) + shlex.split(inst.jvm_args or ""))
+
+
+def preview_command(inst: Instance) -> str:
+    """Human-readable launch command for the Settings tab."""
+    java = javamgr.java_for(inst)
+    java = str(java) if java else f"java{inst.java_major}"
+    mode, target = inst.launch_mode, inst.launch_target
+    if not mode or not target:
+        mode, target = loaders.detect_launch(inst.server_dir)
+    if not mode:
+        return "Launch: (not detected yet - use Re-detect launch)"
+    try:
+        argv = make_argv(inst, java, mode, target)
+    except (RuntimeError, ValueError) as e:
+        return f"Launch: invalid settings ({e})"
+    if mode == "script":
+        return f"Launch: bash {target}   with  _JAVA_OPTIONS=\"{script_java_options(inst)}\""
+    shown, skipping = [], False
+    for a in argv:
+        if a in AIKAR_FLAGS:
+            if not skipping:
+                shown.append("[Aikar flags]")
+                skipping = True
+            continue
+        shown.append(a)
+    return "Launch: " + " ".join(shlex.quote(a) for a in shown)
+
+
 def build_command(inst: Instance, java: str):
     sd = inst.server_dir
     env = os.environ.copy()
     jbin = Path(java).parent
     env["JAVA_HOME"] = str(jbin.parent)
     env["PATH"] = str(jbin) + os.pathsep + env.get("PATH", "")
-    xmx = max(256, int(inst.memory_mb))
-    xms = max(128, min(int(inst.min_memory_mb or xmx), xmx))
-    mem = [f"-Xms{xms}M", f"-Xmx{xmx}M"]
-    flags = AIKAR_FLAGS if inst.aikar_flags else []
-    extra = shlex.split(inst.jvm_args or "")
     mode, target = inst.launch_mode, inst.launch_target
     if not mode or not target:
         mode, target = loaders.detect_launch(sd)
@@ -71,14 +117,9 @@ def build_command(inst: Instance, java: str):
                            "'Launch target' in the Settings tab.")
     if not (sd / target).exists():
         raise RuntimeError(f"Launch target not found: {target}")
-    if mode == "argsfile":
-        argv = [java, *mem, *flags, *extra, "@" + target, "nogui"]
-    elif mode == "jar":
-        argv = [java, *mem, *flags, *extra, "-jar", target, "nogui"]
-    elif mode == "script":
-        argv = ["bash", target]
-    else:
-        raise RuntimeError(f"Unknown launch mode {mode}")
+    argv = make_argv(inst, java, mode, target)
+    if mode == "script":
+        env["_JAVA_OPTIONS"] = script_java_options(inst)
     return argv, env
 
 
@@ -372,6 +413,9 @@ class Runner:
         java = javamgr.ensure_java_for(self.inst, log=lambda m: self.emit(m, panel=True))
         argv, env = build_command(self.inst, java)
         self.emit("Launching: " + " ".join(shlex.quote(a) for a in argv), panel=True)
+        if env.get("_JAVA_OPTIONS"):
+            self.emit(f"Panel RAM/JVM settings passed to the script: {env['_JAVA_OPTIONS']}",
+                      panel=True)
         self.proc = subprocess.Popen(argv, cwd=str(self.inst.server_dir), stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                                      start_new_session=True, close_fds=True)

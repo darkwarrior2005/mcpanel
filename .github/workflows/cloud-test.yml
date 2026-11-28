@@ -20,6 +20,9 @@ jobs:
           ./install.sh --no-service
           ~/.local/share/mcpanel/venv/bin/pip install -q mcstatus
 
+      - name: Click every button in the TUI (UI sweep)
+        run: ~/.local/share/mcpanel/venv/bin/python tests/ui_sweep.py
+
       - name: Run the real end-to-end test
         env:
           REPORT_DIR: ${{ github.workspace }}/report

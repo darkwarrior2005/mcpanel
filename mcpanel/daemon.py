@@ -149,7 +149,16 @@ class Daemon:
                 log(f"loop error: {e}")
             self.stopping.wait(30)
         log("shutting down")
-        self.shutdown_all()
+        keep = paths.RUN_DIR / "keep-servers"
+        try:
+            recent = keep.exists() and time.time() - keep.stat().st_mtime < 300
+            keep.unlink(missing_ok=True)
+        except OSError:
+            recent = False
+        if recent:
+            log("restarting for an update - servers keep running")
+        else:
+            self.shutdown_all()
         try:
             self.sock.close()
             control.DAEMON_SOCK.unlink()

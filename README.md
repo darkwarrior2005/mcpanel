@@ -13,7 +13,8 @@ everything from one terminal UI (mouse **and** keyboard), over SSH, through Tail
 - **Live console** with command input, history and quick buttons (`list`, `save-all`, ...).
 - **Players**: make/remove operators (level 1-4), whitelist add/remove/on/off, kick, ban, unban.
   Works live (sends commands) and while the server is offline (edits ops.json etc.).
-- **Settings**: RAM, Java version, JVM flags (Aikar's flags preset), MOTD, port, difficulty,
+- **Settings** (save automatically as you change them, with a live preview of the exact
+  launch command): RAM, Java version, JVM flags (Aikar's flags preset), MOTD, port, difficulty,
   gamemode, max players, view distance, PvP, online-mode, whitelist, seed... plus a raw
   `server.properties` editor.
 - **Mods**: list, filter, enable/disable (`.jar` <-> `.jar.disabled`), delete.
@@ -142,12 +143,25 @@ mcpanel backup <name|id>
 - **"Don't know how to start this server"** - Settings -> *Re-detect launch*, or set
   *Launch mode* (`argsfile` for Forge/NeoForge 1.17+, `jar` for Fabric/old Forge/vanilla,
   `script` for packs that only ship `start.sh`) and *Launch target*, then Save.
-- **Script mode** packs (`start.sh`) control their own memory via `user_jvm_args.txt`
-  (Settings -> *Edit JVM args file*). Some scripts loop forever on stop; prefer `jar`/`argsfile`.
+- **Script mode** packs (`start.sh`): MCPanel's Max/Min RAM and Extra JVM args still apply
+  (passed via `_JAVA_OPTIONS`, which overrides the script's own `-Xmx`). The launch preview in
+  Settings shows exactly what is used. Some scripts loop forever on stop; prefer `jar`/`argsfile`.
 - **Mouse doesn't work over SSH** - use a modern terminal (Windows Terminal, iTerm2, kitty,
   GNOME Terminal...). Keyboard always works: Tab moves focus, Enter presses buttons.
 - **Java download fails** - install it yourself (`sudo apt install openjdk-21-jre-headless`);
   MCPanel finds system Java automatically, or set *Custom Java binary* in Settings.
+
+## Updating
+
+```bash
+cd mcpanel
+./update.sh
+```
+
+Pulls the newest code and replaces only MCPanel's program files (a few seconds - no
+reinstall). Your servers, worlds, mods, backups and settings are not touched, and the
+background service restarts **without stopping running servers**. Reopen `mcpanel`
+afterwards; restart servers (R) when convenient so they pick up the new code too.
 
 ## Uninstall
 
