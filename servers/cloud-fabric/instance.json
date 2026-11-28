@@ -1,0 +1,23 @@
+{
+  "id": "cloud-fabric",
+  "name": "Cloud Fabric",
+  "mc_version": "26.3",
+  "loader": "fabric",
+  "loader_version": "0.20.1",
+  "source": {
+    "type": "basic"
+  },
+  "java_major": 25,
+  "java_path": "",
+  "memory_mb": 3072,
+  "min_memory_mb": 1024,
+  "jvm_args": "",
+  "aikar_flags": true,
+  "launch_mode": "jar",
+  "launch_target": "fabric-server-launch.jar",
+  "autostart": true,
+  "auto_restart": true,
+  "backup_interval_h": 0.0,
+  "backup_keep": 5,
+  "created": 1795882302.238357
+}

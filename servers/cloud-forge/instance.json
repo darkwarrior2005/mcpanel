@@ -1,0 +1,23 @@
+{
+  "id": "cloud-forge",
+  "name": "Cloud Forge",
+  "mc_version": "1.20.1",
+  "loader": "forge",
+  "loader_version": "47.4.28",
+  "source": {
+    "type": "basic"
+  },
+  "java_major": 17,
+  "java_path": "",
+  "memory_mb": 3072,
+  "min_memory_mb": 1024,
+  "jvm_args": "",
+  "aikar_flags": true,
+  "launch_mode": "argsfile",
+  "launch_target": "libraries/net/minecraftforge/forge/1.20.1-47.4.28/unix_args.txt",
+  "autostart": false,
+  "auto_restart": true,
+  "backup_interval_h": 0.0,
+  "backup_keep": 5,
+  "created": 1795882535.0138392
+}

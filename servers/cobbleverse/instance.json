@@ -1,0 +1,27 @@
+{
+  "id": "cobbleverse",
+  "name": "Cobbleverse",
+  "mc_version": "1.21.1",
+  "loader": "fabric",
+  "loader_version": "0.19.5",
+  "source": {
+    "type": "modrinth",
+    "project_id": "Jkb29YJU",
+    "version_id": "3H4vNHWe",
+    "title": "COBBLEVERSE - Pokemon Adventure [Cobblemon]",
+    "version": "1.8.1"
+  },
+  "java_major": 21,
+  "java_path": "",
+  "memory_mb": 8192,
+  "min_memory_mb": 1024,
+  "jvm_args": "",
+  "aikar_flags": true,
+  "launch_mode": "jar",
+  "launch_target": "fabric-server-launch.jar",
+  "autostart": false,
+  "auto_restart": true,
+  "backup_interval_h": 0.0,
+  "backup_keep": 5,
+  "created": 1795882384.795842
+}
