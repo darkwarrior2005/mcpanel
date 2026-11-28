@@ -33,9 +33,13 @@ everything from one terminal UI (mouse **and** keyboard), over SSH, through Tail
 Requirements: Linux, Python 3.9+, `python3-venv`. (Debian/Ubuntu: `sudo apt install python3 python3-venv`)
 
 ```bash
-unzip mcpanel.zip && cd mcpanel
+git clone https://github.com/darkwarrior2005/mcpanel ~/mcpanel-src
+cd ~/mcpanel-src
 ./install.sh --service
 ```
+
+> Keep the code in `~/mcpanel-src`. `~/mcpanel` is MCPanel's **data** folder (your worlds) -
+> never delete it.
 
 This creates a private virtualenv in `~/.local/share/mcpanel`, installs the `mcpanel`
 command to `~/.local/bin`, keeps all data in `~/mcpanel`, and installs + starts the
@@ -154,7 +158,7 @@ mcpanel backup <name|id>
 ## Updating
 
 ```bash
-cd mcpanel
+cd ~/mcpanel-src
 ./update.sh
 ```
 
